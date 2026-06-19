@@ -48,20 +48,23 @@ function TeleprompterContent() {
   const progressBarRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const animRef = useRef<number | null>(null);
   const posRef = useRef(0);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pipKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Refs for canvas rendering (避免闭包问题)
+  // Refs 避免闭包问题
   const linesRef = useRef<ReturnType<typeof parseScript>>([]);
   const fontSizeRef = useRef(fontSize);
   const mirrorRef = useRef(mirror);
+  const speedRef = useRef(speed);
 
   const lines = useMemo(() => parseScript(script), [script]);
 
   useEffect(() => { linesRef.current = lines; }, [lines]);
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
   useEffect(() => { mirrorRef.current = mirror; }, [mirror]);
+  useEffect(() => { speedRef.current = speed; }, [speed]);
 
   useEffect(() => {
     setPipSupported("pictureInPictureEnabled" in document);
@@ -77,7 +80,6 @@ function TeleprompterContent() {
     }
   }, [id, getScript, isOverlay]);
 
-  // 退出页面时关闭画中画
   useEffect(() => {
     return () => {
       if (document.pictureInPictureElement) {
@@ -86,6 +88,7 @@ function TeleprompterContent() {
     };
   }, []);
 
+  // 绘制画布（用 ref 避免闭包过期）
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -109,23 +112,19 @@ function TeleprompterContent() {
       ctx.translate(-W, 0);
     }
 
-    // 计算画布总高度，用于映射 DOM 滚动比例
     let totalH = H * 0.35;
     const items = currentLines.map((line) => {
-      const size = line.isAction
-        ? canvasFs * 0.65
-        : line.isPhonetics || line.isActionTranslation
-        ? canvasFs * 0.5
-        : canvasFs;
+      const size = line.isAction ? canvasFs * 0.65
+        : line.isPhonetics || line.isActionTranslation ? canvasFs * 0.5 : canvasFs;
       const h = size * 1.4 + lineGap;
       totalH += h;
       return { ...line, size, h };
     });
 
     const container = containerRef.current;
-    const domMax = container ? container.scrollHeight - container.clientHeight : 1;
+    const domMax = container ? Math.max(1, container.scrollHeight - container.clientHeight) : 1;
     const canvasMax = Math.max(1, totalH - H * 0.65);
-    const pct = domMax > 0 ? Math.min(1, posRef.current / domMax) : 0;
+    const pct = Math.min(1, posRef.current / domMax);
     const canvasScroll = pct * canvasMax;
 
     let y = H * 0.35 - canvasScroll;
@@ -133,15 +132,9 @@ function TeleprompterContent() {
       if (y > -h && y < H + h) {
         const weight = isAction ? "500" : isPhonetics || isActionTranslation ? "400" : "700";
         ctx.font = `${weight} ${Math.round(size)}px -apple-system, sans-serif`;
-        ctx.fillStyle = isAction
-          ? "#ffc800"
-          : isPhonetics
-          ? "#9ca3af"
-          : isActionTranslation
-          ? "#ca8a04"
-          : "#ffffff";
+        ctx.fillStyle = isAction ? "#ffc800" : isPhonetics ? "#9ca3af"
+          : isActionTranslation ? "#ca8a04" : "#ffffff";
         ctx.textBaseline = "top";
-
         const maxW = W - 48;
         if (ctx.measureText(text).width <= maxW) {
           ctx.fillText(text, 24, y, maxW);
@@ -166,12 +159,52 @@ function TeleprompterContent() {
     if (isMirror) ctx.restore();
   }, []);
 
+  // 用 setInterval 替代 RAF — 后台也能继续运行
+  useEffect(() => {
+    if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
+
+    if (!isPlaying) {
+      drawCanvas();
+      return;
+    }
+
+    scrollIntervalRef.current = setInterval(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      posRef.current += speedRef.current * 0.5;
+      container.scrollTop = posRef.current;
+      if (progressBarRef.current) {
+        const max = container.scrollHeight - container.clientHeight;
+        const pct = max > 0 ? Math.min(100, (posRef.current / max) * 100) : 0;
+        progressBarRef.current.style.width = `${pct}%`;
+      }
+      drawCanvas();
+    }, 16);
+
+    return () => {
+      if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
+    };
+  }, [isPlaying, drawCanvas]);
+
+  // 画中画保活：暂停时每 200ms 也刷新画布，防止黑屏
+  useEffect(() => {
+    if (pipKeepAliveRef.current) clearInterval(pipKeepAliveRef.current);
+    if (!isPiP) return;
+    pipKeepAliveRef.current = setInterval(drawCanvas, 200);
+    return () => {
+      if (pipKeepAliveRef.current) clearInterval(pipKeepAliveRef.current);
+    };
+  }, [isPiP, drawCanvas]);
+
+  // 字体/镜像/内容变化时重绘
+  useEffect(() => { drawCanvas(); }, [fontSize, mirror, script, drawCanvas]);
+
   const startPiP = async () => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
     try {
-      drawCanvas();
+      drawCanvas(); // 先画一帧
       const stream = canvas.captureStream(30);
       video.srcObject = stream;
       video.muted = true;
@@ -193,14 +226,9 @@ function TeleprompterContent() {
     }
   };
 
-  // 键盘快捷键
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        e.preventDefault();
-        setIsPlaying((p) => !p);
-        revealControls();
-      }
+      if (e.code === "Space") { e.preventDefault(); setIsPlaying((p) => !p); revealControls(); }
       if (e.code === "ArrowUp") setSpeed((s) => Math.min(5, +(s + 0.3).toFixed(1)));
       if (e.code === "ArrowDown") setSpeed((s) => Math.max(0.3, +(s - 0.3).toFixed(1)));
       if (e.code === "ArrowRight") setFontSize((s) => Math.min(72, s + 2));
@@ -216,36 +244,17 @@ function TeleprompterContent() {
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 3000);
   };
 
-  const scroll = useCallback(() => {
-    if (!containerRef.current) return;
-    posRef.current += speed * 0.5;
-    containerRef.current.scrollTop = posRef.current;
-    if (progressBarRef.current) {
-      const max = containerRef.current.scrollHeight - containerRef.current.clientHeight;
-      const pct = max > 0 ? Math.min(100, (posRef.current / max) * 100) : 0;
-      progressBarRef.current.style.width = `${pct}%`;
-    }
-    drawCanvas();
-    animRef.current = requestAnimationFrame(scroll);
-  }, [speed, drawCanvas]);
-
-  useEffect(() => {
-    if (isPlaying) {
-      animRef.current = requestAnimationFrame(scroll);
-    } else {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
-      drawCanvas(); // 暂停时也更新画布
-    }
-    return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
-    };
-  }, [isPlaying, scroll, drawCanvas]);
-
-  // 字体/镜像变化时重绘
-  useEffect(() => { drawCanvas(); }, [fontSize, mirror, script, drawCanvas]);
-
   const handleTap = () => {
     setIsPlaying((p) => !p);
+    revealControls();
+  };
+
+  const reset = () => {
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    posRef.current = 0;
+    if (progressBarRef.current) progressBarRef.current.style.width = "0%";
+    setIsPlaying(false);
+    drawCanvas();
     revealControls();
   };
 
@@ -257,9 +266,14 @@ function TeleprompterContent() {
         transform: mirror ? "scaleX(-1)" : undefined,
       }}
     >
-      {/* 隐藏的画中画元素 */}
-      <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} className="hidden" />
-      <video ref={videoRef} className="hidden" playsInline muted />
+      {/* canvas 放到屏幕外，不用 display:none（否则部分浏览器无法捕获流） */}
+      <canvas
+        ref={canvasRef}
+        width={CANVAS_W}
+        height={CANVAS_H}
+        style={{ position: "fixed", left: "-9999px", top: 0 }}
+      />
+      <video ref={videoRef} playsInline muted style={{ position: "fixed", left: "-9999px", top: 0, width: 1, height: 1 }} />
 
       {/* 进度条 */}
       <div className="absolute top-0 left-0 right-0 h-1 bg-white/10 z-20">
@@ -273,25 +287,13 @@ function TeleprompterContent() {
             <div
               key={i}
               style={{
-                fontSize: line.isAction
-                  ? fontSize * 0.6
-                  : line.isPhonetics || line.isActionTranslation
-                  ? fontSize * 0.48
-                  : fontSize,
+                fontSize: line.isAction ? fontSize * 0.6 : line.isPhonetics || line.isActionTranslation ? fontSize * 0.48 : fontSize,
                 fontWeight: line.isAction ? 500 : line.isPhonetics || line.isActionTranslation ? 400 : 700,
-                color: line.isAction
-                  ? "#ffc800"
-                  : line.isPhonetics
-                  ? "#6b7280"
-                  : line.isActionTranslation
-                  ? "#a16207"
-                  : "#ffffff",
+                color: line.isAction ? "#ffc800" : line.isPhonetics ? "#6b7280" : line.isActionTranslation ? "#a16207" : "#ffffff",
                 lineHeight: 1.35,
                 letterSpacing: line.isPhonetics ? "0.06em" : undefined,
                 marginTop: line.isPhonetics || line.isActionTranslation ? "-12px" : undefined,
-                textShadow: isOverlay
-                  ? "0 0 8px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,1), 0 -1px 4px rgba(0,0,0,1)"
-                  : undefined,
+                textShadow: isOverlay ? "0 0 8px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,1)" : undefined,
               }}
             >
               {line.text}
@@ -307,36 +309,17 @@ function TeleprompterContent() {
           style={{ transform: mirror ? "scaleX(-1)" : undefined }}
         >
           <div className="flex items-center justify-between">
-            <button onClick={() => router.back()} className="text-gray-400 text-sm p-2">
-              ‹ 返回
-            </button>
+            <button onClick={() => router.back()} className="text-gray-400 text-sm p-2">‹ 返回</button>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  if (containerRef.current) containerRef.current.scrollTop = 0;
-                  posRef.current = 0;
-                  if (progressBarRef.current) progressBarRef.current.style.width = "0%";
-                  setIsPlaying(false);
-                  drawCanvas();
-                  revealControls();
-                }}
-                className="px-3 py-2 rounded-full text-sm text-gray-400 bg-white/10"
-              >
-                ↩ 重播
-              </button>
+              <button onClick={reset} className="px-3 py-2 rounded-full text-sm text-gray-400 bg-white/10">↩ 重播</button>
               <button
                 onClick={handleTap}
-                className={`px-6 py-2 rounded-full font-bold text-sm ${
-                  isPlaying ? "bg-red-500 text-white" : "bg-yellow-400 text-black"
-                }`}
+                className={`px-6 py-2 rounded-full font-bold text-sm ${isPlaying ? "bg-red-500 text-white" : "bg-yellow-400 text-black"}`}
               >
                 {isPlaying ? "⏸ 暂停" : "▶ 开始"}
               </button>
             </div>
-            <button
-              onClick={() => setMirror((m) => !m)}
-              className={`text-sm p-2 ${mirror ? "text-yellow-400" : "text-gray-400"}`}
-            >
+            <button onClick={() => setMirror((m) => !m)} className={`text-sm p-2 ${mirror ? "text-yellow-400" : "text-gray-400"}`}>
               镜像
             </button>
           </div>
@@ -344,44 +327,36 @@ function TeleprompterContent() {
           <div className="flex items-center gap-3">
             <span className="text-gray-400 text-xs w-12">速度</span>
             <input type="range" min="0.3" max="5" step="0.1" value={speed}
-              onChange={(e) => setSpeed(Number(e.target.value))}
-              className="flex-1 accent-yellow-400" />
+              onChange={(e) => setSpeed(Number(e.target.value))} className="flex-1 accent-yellow-400" />
             <span className="text-yellow-400 text-xs w-6">{speed.toFixed(1)}</span>
           </div>
 
           <div className="flex items-center gap-3">
             <span className="text-gray-400 text-xs w-12">字号</span>
             <input type="range" min="20" max="72" step="2" value={fontSize}
-              onChange={(e) => setFontSize(Number(e.target.value))}
-              className="flex-1 accent-yellow-400" />
+              onChange={(e) => setFontSize(Number(e.target.value))} className="flex-1 accent-yellow-400" />
             <span className="text-yellow-400 text-xs w-6">{fontSize}</span>
           </div>
 
           <div className="flex items-center gap-3">
             <span className="text-gray-400 text-xs w-12">透明度</span>
             <input type="range" min="0.1" max="1" step="0.05" value={bgOpacity}
-              onChange={(e) => setBgOpacity(Number(e.target.value))}
-              className="flex-1 accent-yellow-400" />
+              onChange={(e) => setBgOpacity(Number(e.target.value))} className="flex-1 accent-yellow-400" />
             <span className="text-yellow-400 text-xs w-6">{Math.round(bgOpacity * 100)}%</span>
           </div>
 
-          {/* 画中画按钮 */}
           {pipSupported && (
             <button
               onClick={togglePiP}
               className={`w-full py-3 rounded-2xl font-bold text-sm ${
-                isPiP
-                  ? "bg-yellow-400/20 text-yellow-400 border border-yellow-400/40"
-                  : "bg-white/10 text-white"
+                isPiP ? "bg-yellow-400/20 text-yellow-400 border border-yellow-400/40" : "bg-white/10 text-white"
               }`}
             >
-              {isPiP ? "⊡ 已开启悬浮窗 · 点击关闭" : "⊡ 开启悬浮窗（可切换到其他App）"}
+              {isPiP ? "⊡ 悬浮窗已开启 · 点击关闭" : "⊡ 开启悬浮窗（可切换到抖音等App）"}
             </button>
           )}
 
-          <div className="text-center text-gray-700 text-xs">
-            空格键 播放/暂停 · ↑↓ 调速度 · ←→ 调字号
-          </div>
+          <div className="text-center text-gray-700 text-xs">空格键 播放/暂停 · ↑↓ 调速度 · ←→ 调字号</div>
         </div>
       )}
     </div>
@@ -389,9 +364,5 @@ function TeleprompterContent() {
 }
 
 export default function TeleprompterPage() {
-  return (
-    <Suspense>
-      <TeleprompterContent />
-    </Suspense>
-  );
+  return <Suspense><TeleprompterContent /></Suspense>;
 }
