@@ -16,16 +16,94 @@ function formatTime(ts: number) {
 }
 
 export default function Home() {
-  const { scripts, deleteScript } = useScriptStore();
+  const { scripts, deleteScript, syncCode, importFromCode } = useScriptStore();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showSync, setShowSync] = useState(false);
+  const [importCode, setImportCode] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [copied, setCopied] = useState(false);
   const recent = scripts.slice(0, 15);
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(syncCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleImport = async () => {
+    if (!importCode.trim()) return;
+    setImporting(true);
+    setImportError("");
+    const ok = await importFromCode(importCode);
+    setImporting(false);
+    if (ok) {
+      setShowSync(false);
+      setImportCode("");
+    } else {
+      setImportError("没有找到该同步码的脚本，请检查后重试");
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0f0f0f] text-white">
-      <div className="p-6 pt-12">
-        <h1 className="text-2xl font-bold mb-1">AI 提词助手</h1>
-        <p className="text-gray-400 text-sm">直播带货 · 短视频 · 电商种草</p>
+      <div className="p-6 pt-12 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold mb-1">AI 提词助手</h1>
+          <p className="text-gray-400 text-sm">直播带货 · 短视频 · 电商种草</p>
+        </div>
+        <button
+          onClick={() => setShowSync(true)}
+          className="mt-1 text-gray-500 text-xs flex flex-col items-center gap-1"
+        >
+          <span className="text-lg">☁️</span>
+          <span>同步</span>
+        </button>
       </div>
+
+      {/* 同步码面板 */}
+      {showSync && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end">
+          <div className="w-full bg-[#1a1a1a] rounded-t-3xl p-6 pb-10">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-bold text-lg">换手机恢复脚本</h2>
+              <button onClick={() => { setShowSync(false); setImportError(""); setImportCode(""); }} className="text-gray-400 text-2xl leading-none">×</button>
+            </div>
+
+            <p className="text-gray-400 text-sm mb-3">你的同步码（换手机时输入这个）</p>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="flex-1 bg-[#0f0f0f] rounded-xl px-4 py-3 font-mono text-xl font-bold tracking-widest text-yellow-400 text-center">
+                {syncCode}
+              </div>
+              <button
+                onClick={copyCode}
+                className="bg-yellow-400 text-black font-bold px-4 py-3 rounded-xl text-sm shrink-0"
+              >
+                {copied ? "✓ 已复制" : "复制"}
+              </button>
+            </div>
+
+            <div className="border-t border-white/10 pt-6">
+              <p className="text-gray-400 text-sm mb-3">在新手机上输入旧同步码来恢复脚本</p>
+              <input
+                value={importCode}
+                onChange={(e) => setImportCode(e.target.value.toUpperCase())}
+                placeholder="输入同步码，例：ABCD-1234"
+                className="w-full bg-[#0f0f0f] rounded-xl px-4 py-3 font-mono text-center text-base outline-none border border-white/10 mb-3 placeholder-gray-600 tracking-widest"
+                maxLength={9}
+              />
+              {importError && <p className="text-red-400 text-xs mb-3">{importError}</p>}
+              <button
+                onClick={handleImport}
+                disabled={importing || !importCode.trim()}
+                className="w-full bg-yellow-400 text-black font-bold py-4 rounded-2xl disabled:opacity-50"
+              >
+                {importing ? "恢复中..." : "恢复脚本"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="px-4 mb-6">
         <Link
@@ -75,17 +153,9 @@ export default function Home() {
                   <div className="bg-[#1a1a1a] rounded-xl px-4 py-3 flex items-center justify-between border border-red-500/30">
                     <p className="text-sm text-gray-400 truncate mr-4">删除「{s.title}」？</p>
                     <div className="flex gap-4 shrink-0">
+                      <button onClick={() => setDeletingId(null)} className="text-gray-400 text-sm">取消</button>
                       <button
-                        onClick={() => setDeletingId(null)}
-                        className="text-gray-400 text-sm"
-                      >
-                        取消
-                      </button>
-                      <button
-                        onClick={() => {
-                          deleteScript(s.id);
-                          setDeletingId(null);
-                        }}
+                        onClick={() => { deleteScript(s.id); setDeletingId(null); }}
                         className="text-red-400 text-sm font-medium"
                       >
                         删除
