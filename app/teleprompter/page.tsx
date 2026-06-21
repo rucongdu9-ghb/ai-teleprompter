@@ -27,6 +27,14 @@ function parseScript(text: string) {
 const CANVAS_W = 640;
 const CANVAS_H = 360;
 
+function normalizeForMatch(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^一-鿿؀-ۿa-z0-9]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const COLOR_THEMES = [
   { id: "default", label: "默认", bg: "#000000", text: "#ffffff", hint: "通用" },
   { id: "green",   label: "夜光绿", bg: "#000000", text: "#00ff88", hint: "暗光" },
@@ -54,6 +62,7 @@ function TeleprompterContent() {
   const [isLandscape, setIsLandscape] = useState(false);
   const [themeId, setThemeId] = useState<ThemeId>("default");
   const theme = COLOR_THEMES.find((t) => t.id === themeId)!;
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -63,6 +72,13 @@ function TeleprompterContent() {
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pipKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isVoiceModeRef = useRef(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const voiceTargetRef = useRef<number | null>(null);
+  const scriptNormRef = useRef("");
+  const voiceSearchFromRef = useRef(0);
+  const voicePauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs 避免闭包问题
   const linesRef = useRef<ReturnType<typeof parseScript>>([]);
@@ -201,11 +217,105 @@ function TeleprompterContent() {
     if (isMirror) ctx.restore();
   }, []);
 
-  // 用 setInterval 替代 RAF — 后台也能继续运行
+  // 脚本文本归一化，用于声音跟读匹配
+  useEffect(() => {
+    const plain = lines
+      .filter(l => !l.isAction && !l.isActionTranslation)
+      .map(l => l.text)
+      .join(" ");
+    scriptNormRef.current = normalizeForMatch(plain);
+    voiceSearchFromRef.current = 0;
+  }, [lines]);
+
+  const startVoiceMode = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      alert("您的浏览器不支持语音识别，请使用 Safari 或 Chrome");
+      return;
+    }
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    // 根据脚本内容自动判断语言
+    const scriptText = scriptNormRef.current;
+    const hasArabic = /[؀-ۿ]/.test(scriptText);
+    const hasChinese = /[一-鿿]/.test(scriptText);
+    recognition.lang = hasArabic ? "ar-SA" : !hasChinese ? "en-US" : "zh-CN";
+
+    recognition.onresult = (event: { resultIndex: number; results: SpeechRecognitionResultList }) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      if (!transcript.trim()) return;
+
+      const norm = normalizeForMatch(transcript);
+      const words = norm.split(" ").filter(Boolean);
+      if (words.length < 2) return;
+
+      // 用最后几个词匹配（更稳定）
+      const phrase = words.slice(-Math.min(5, words.length)).join(" ");
+      const scriptNorm = scriptNormRef.current;
+      const searchFrom = Math.max(0, voiceSearchFromRef.current - phrase.length * 3);
+
+      const idx = scriptNorm.indexOf(phrase, searchFrom);
+      if (idx !== -1) {
+        const endIdx = idx + phrase.length;
+        voiceSearchFromRef.current = endIdx;
+        const progress = endIdx / scriptNorm.length;
+        const container = containerRef.current;
+        if (container) {
+          const max = container.scrollHeight - container.clientHeight;
+          const target = progress * max;
+          if (target > (voiceTargetRef.current ?? 0) - 50) {
+            voiceTargetRef.current = target;
+          }
+        }
+      }
+
+      // 重置暂停定时器
+      if (voicePauseTimerRef.current) clearTimeout(voicePauseTimerRef.current);
+      voicePauseTimerRef.current = setTimeout(() => {
+        voiceTargetRef.current = null;
+      }, 1500);
+    };
+
+    recognition.onerror = (event: { error: string }) => {
+      if (event.error === "no-speech") return;
+      console.warn("Voice recognition:", event.error);
+    };
+
+    recognition.onend = () => {
+      if (isVoiceModeRef.current) {
+        try { recognition.start(); } catch { /* ignore */ }
+      }
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+    isVoiceModeRef.current = true;
+    voiceTargetRef.current = posRef.current;
+    setIsVoiceMode(true);
+  }, []);
+
+  const stopVoiceMode = useCallback(() => {
+    isVoiceModeRef.current = false;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    voiceTargetRef.current = null;
+    if (voicePauseTimerRef.current) clearTimeout(voicePauseTimerRef.current);
+    setIsVoiceMode(false);
+  }, []);
+
+  // 组件卸载时停止语音识别
+  useEffect(() => () => { stopVoiceMode(); }, [stopVoiceMode]);
+
+  // 用 setInterval 替代 RAF — 后台也能继续运行；声音跟读模式也在此驱动
   useEffect(() => {
     if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
 
-    if (!isPlaying) {
+    if (!isPlaying && !isVoiceMode) {
       drawCanvas();
       return;
     }
@@ -213,7 +323,23 @@ function TeleprompterContent() {
     scrollIntervalRef.current = setInterval(() => {
       const container = containerRef.current;
       if (!container) return;
-      posRef.current += speedRef.current * 0.5;
+
+      if (isVoiceModeRef.current) {
+        const target = voiceTargetRef.current;
+        if (target !== null) {
+          const diff = target - posRef.current;
+          if (Math.abs(diff) > 0.5) {
+            // 平滑跟随：最少 1px/帧，最多 6px/帧
+            posRef.current += Math.sign(diff) * Math.min(Math.abs(diff) * 0.06, 6);
+          } else {
+            posRef.current = target;
+          }
+        }
+        // target === null 表示用户暂停说话，不滚动
+      } else {
+        posRef.current += speedRef.current * 0.5;
+      }
+
       container.scrollTop = posRef.current;
       if (progressBarRef.current) {
         const max = container.scrollHeight - container.clientHeight;
@@ -226,7 +352,7 @@ function TeleprompterContent() {
     return () => {
       if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
     };
-  }, [isPlaying, drawCanvas]);
+  }, [isPlaying, isVoiceMode, drawCanvas]);
 
   // 画中画保活：暂停时每 200ms 也刷新画布，防止黑屏
   useEffect(() => {
@@ -382,6 +508,12 @@ function TeleprompterContent() {
                 <span className="text-yellow-400 text-xs w-6">{fontSize}</span>
               </div>
               <button onClick={() => setMirror((m) => !m)} className={`text-xs shrink-0 ${mirror ? "text-yellow-400" : "text-gray-500"}`}>镜像</button>
+              <button
+                onClick={() => isVoiceMode ? stopVoiceMode() : startVoiceMode()}
+                className={`text-xs shrink-0 ${isVoiceMode ? "text-red-400 animate-pulse" : "text-gray-500"}`}
+              >
+                {isVoiceMode ? "🎤关" : "🎤跟读"}
+              </button>
               {pipSupported && (
                 <button onClick={togglePiP} className={`text-xs shrink-0 ${isPiP ? "text-yellow-400" : "text-gray-500"}`}>
                   {isPiP ? "⊡关" : "⊡悬浮"}
@@ -442,6 +574,19 @@ function TeleprompterContent() {
                   ))}
                 </div>
               </div>
+
+              {/* 声音跟读 */}
+              <button
+                onClick={() => isVoiceMode ? stopVoiceMode() : startVoiceMode()}
+                className={`w-full py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 ${
+                  isVoiceMode
+                    ? "bg-red-500/20 text-red-400 border border-red-500/40"
+                    : "bg-white/10 text-white"
+                }`}
+              >
+                <span className={isVoiceMode ? "animate-pulse" : ""}>🎤</span>
+                {isVoiceMode ? "声音跟读开启中 · 点击关闭" : "开启声音跟读（自动跟随朗读）"}
+              </button>
 
               {pipSupported && (
                 <button
