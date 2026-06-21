@@ -80,6 +80,26 @@ function TeleprompterContent() {
     }
   }, [id, getScript, isOverlay]);
 
+  // 防息屏：进入提词器自动保持屏幕常亮，切回来时重新申请
+  useEffect(() => {
+    let wakeLock: WakeLockSentinel | null = null;
+    const acquire = async () => {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLock = await navigator.wakeLock.request("screen");
+        }
+      } catch { /* 设备不支持时静默失败 */ }
+    };
+    acquire();
+    const onVisible = () => { if (document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      wakeLock?.release();
+    };
+  }, []);
+
+  // 退出页面时关闭画中画
   useEffect(() => {
     return () => {
       if (document.pictureInPictureElement) {
