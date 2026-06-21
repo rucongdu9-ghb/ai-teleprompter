@@ -27,6 +27,14 @@ function parseScript(text: string) {
 const CANVAS_W = 640;
 const CANVAS_H = 360;
 
+const COLOR_THEMES = [
+  { id: "default", label: "默认", bg: "#000000", text: "#ffffff", hint: "通用" },
+  { id: "green",   label: "夜光绿", bg: "#000000", text: "#00ff88", hint: "暗光" },
+  { id: "white",   label: "纯白",   bg: "#ffffff", text: "#111111", hint: "户外" },
+  { id: "eye",     label: "护眼",   bg: "#1a2e1a", text: "#f0ead6", hint: "长用" },
+] as const;
+type ThemeId = typeof COLOR_THEMES[number]["id"];
+
 function TeleprompterContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -44,6 +52,8 @@ function TeleprompterContent() {
   const [isPiP, setIsPiP] = useState(false);
   const [pipSupported, setPipSupported] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [themeId, setThemeId] = useState<ThemeId>("default");
+  const theme = COLOR_THEMES.find((t) => t.id === themeId)!;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -59,6 +69,7 @@ function TeleprompterContent() {
   const fontSizeRef = useRef(fontSize);
   const mirrorRef = useRef(mirror);
   const speedRef = useRef(speed);
+  const themeRef = useRef(theme);
 
   const lines = useMemo(() => parseScript(script), [script]);
 
@@ -66,6 +77,7 @@ function TeleprompterContent() {
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
   useEffect(() => { mirrorRef.current = mirror; }, [mirror]);
   useEffect(() => { speedRef.current = speed; }, [speed]);
+  useEffect(() => { themeRef.current = theme; }, [theme]);
 
   useEffect(() => {
     setPipSupported("pictureInPictureEnabled" in document);
@@ -131,8 +143,9 @@ function TeleprompterContent() {
     const isMirror = mirrorRef.current;
     const canvasFs = Math.round(Math.min(fs, 48) * 0.78);
     const lineGap = 14;
+    const currentTheme = themeRef.current;
 
-    ctx.fillStyle = "#000000";
+    ctx.fillStyle = currentTheme.bg;
     ctx.fillRect(0, 0, W, H);
 
     if (isMirror) {
@@ -162,7 +175,7 @@ function TeleprompterContent() {
         const weight = isAction ? "500" : isPhonetics || isActionTranslation ? "400" : "700";
         ctx.font = `${weight} ${Math.round(size)}px -apple-system, sans-serif`;
         ctx.fillStyle = isAction ? "#ffc800" : isPhonetics ? "#9ca3af"
-          : isActionTranslation ? "#ca8a04" : "#ffffff";
+          : isActionTranslation ? "#ca8a04" : currentTheme.text;
         ctx.textBaseline = "top";
         const maxW = W - 48;
         if (ctx.measureText(text).width <= maxW) {
@@ -225,8 +238,8 @@ function TeleprompterContent() {
     };
   }, [isPiP, drawCanvas]);
 
-  // 字体/镜像/内容变化时重绘
-  useEffect(() => { drawCanvas(); }, [fontSize, mirror, script, drawCanvas]);
+  // 字体/镜像/内容/主题变化时重绘
+  useEffect(() => { drawCanvas(); }, [fontSize, mirror, script, themeId, drawCanvas]);
 
   const startPiP = async () => {
     const canvas = canvasRef.current;
@@ -287,11 +300,19 @@ function TeleprompterContent() {
     revealControls();
   };
 
+  // 背景色根据透明度和主题混合
+  const bgColor = themeId === "white"
+    ? `rgba(255,255,255,${bgOpacity})`
+    : themeId === "eye"
+    ? `rgba(26,46,26,${bgOpacity})`
+    : `rgba(0,0,0,${bgOpacity})`;
+
   return (
     <div
       className="fixed inset-0 flex flex-col"
       style={{
-        backgroundColor: `rgba(0, 0, 0, ${bgOpacity})`,
+        backgroundColor: bgColor,
+        color: theme.text,
         transform: mirror ? "scaleX(-1)" : undefined,
       }}
     >
@@ -318,7 +339,7 @@ function TeleprompterContent() {
               style={{
                 fontSize: line.isAction ? fontSize * 0.6 : line.isPhonetics || line.isActionTranslation ? fontSize * 0.48 : fontSize,
                 fontWeight: line.isAction ? 500 : line.isPhonetics || line.isActionTranslation ? 400 : 700,
-                color: line.isAction ? "#ffc800" : line.isPhonetics ? "#6b7280" : line.isActionTranslation ? "#a16207" : "#ffffff",
+                color: line.isAction ? "#ffc800" : line.isPhonetics ? "#6b7280" : line.isActionTranslation ? "#a16207" : theme.text,
                 lineHeight: 1.35,
                 letterSpacing: line.isPhonetics ? "0.06em" : undefined,
                 marginTop: line.isPhonetics || line.isActionTranslation ? "-12px" : undefined,
@@ -403,6 +424,25 @@ function TeleprompterContent() {
                   onChange={(e) => setBgOpacity(Number(e.target.value))} className="flex-1 accent-yellow-400" />
                 <span className="text-yellow-400 text-xs w-6">{Math.round(bgOpacity * 100)}%</span>
               </div>
+              {/* 主题色切换 */}
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 text-xs w-12">配色</span>
+                <div className="flex gap-2 flex-1">
+                  {COLOR_THEMES.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setThemeId(t.id)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        themeId === t.id ? "border-yellow-400 text-yellow-400" : "border-white/10 text-gray-400"
+                      }`}
+                      style={{ backgroundColor: t.bg, color: themeId === t.id ? "#facc15" : t.text }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {pipSupported && (
                 <button
                   onClick={togglePiP}
