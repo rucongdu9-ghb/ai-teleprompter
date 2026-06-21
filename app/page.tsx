@@ -2,6 +2,12 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useScriptStore } from "@/lib/store";
+import type { Script } from "@/lib/store";
+
+function buildShareUrl(script: Script): string {
+  const encoded = btoa(encodeURIComponent(JSON.stringify({ title: script.title, content: script.content })));
+  return `${window.location.origin}/s#data=${encoded}`;
+}
 
 function formatTime(ts: number) {
   const diff = Date.now() - ts;
@@ -23,12 +29,33 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [shareToast, setShareToast] = useState("");
   const recent = scripts.slice(0, 15);
 
   const copyCode = () => {
     navigator.clipboard.writeText(syncCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const shareScript = async (script: Script) => {
+    const url = buildShareUrl(script);
+    if (url.length > 8000) {
+      setShareToast("脚本太长，建议用「同步码」分享");
+      setTimeout(() => setShareToast(""), 3000);
+      return;
+    }
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: script.title, text: `来看这份脚本：${script.title}`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShareToast("链接已复制，发给对方打开即可导入");
+        setTimeout(() => setShareToast(""), 3000);
+      }
+    } catch {
+      // 用户取消 share，忽略
+    }
   };
 
   const handleImport = async () => {
@@ -47,6 +74,11 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0f0f0f] text-white">
+      {shareToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-[#1a1a1a] border border-white/10 text-white text-sm font-medium px-5 py-2.5 rounded-full shadow-lg max-w-[85vw] text-center">
+          {shareToast}
+        </div>
+      )}
       <div className="p-6 pt-12 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold mb-1">AI 提词助手</h1>
@@ -175,6 +207,12 @@ export default function Home() {
                       >
                         提词
                       </Link>
+                      <button
+                        onClick={() => shareScript(s)}
+                        className="text-gray-400 text-xs px-2 py-1 bg-white/5 rounded-lg"
+                      >
+                        分享
+                      </button>
                       <button
                         onClick={() => setDeletingId(s.id)}
                         className="text-gray-600 text-xl leading-none w-7 h-7 flex items-center justify-center"
