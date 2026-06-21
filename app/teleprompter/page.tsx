@@ -43,6 +43,7 @@ function TeleprompterContent() {
   const [showControls, setShowControls] = useState(!isOverlay);
   const [isPiP, setIsPiP] = useState(false);
   const [pipSupported, setPipSupported] = useState(false);
+  const [isLandscape, setIsLandscape] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -68,6 +69,14 @@ function TeleprompterContent() {
 
   useEffect(() => {
     setPipSupported("pictureInPictureEnabled" in document);
+  }, []);
+
+  // 横屏检测
+  useEffect(() => {
+    const check = () => setIsLandscape(window.innerWidth > window.innerHeight);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   useEffect(() => {
@@ -301,8 +310,8 @@ function TeleprompterContent() {
       </div>
 
       {/* 脚本内容区 */}
-      <div ref={containerRef} className="flex-1 overflow-hidden px-6 pt-16 pb-32" onClick={handleTap}>
-        <div className="flex flex-col gap-4 pb-[60vh]">
+      <div ref={containerRef} className={`flex-1 overflow-hidden pt-8 pb-24 ${isLandscape ? "px-16" : "px-6 pt-16 pb-32"}`} onClick={handleTap}>
+        <div className={`flex flex-col pb-[60vh] ${isLandscape ? "gap-2" : "gap-4"}`}>
           {lines.map((line, i) => (
             <div
               key={i}
@@ -325,58 +334,88 @@ function TeleprompterContent() {
       {/* 控制栏 */}
       {showControls && (
         <div
-          className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur px-4 pb-8 pt-4 flex flex-col gap-3 z-10"
+          className={`fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur z-10 ${isLandscape ? "px-6 py-2" : "px-4 pb-8 pt-4"}`}
           style={{ transform: mirror ? "scaleX(-1)" : undefined }}
         >
-          <div className="flex items-center justify-between">
-            <button onClick={() => router.back()} className="text-gray-400 text-sm p-2">‹ 返回</button>
-            <div className="flex items-center gap-2">
-              <button onClick={reset} className="px-3 py-2 rounded-full text-sm text-gray-400 bg-white/10">↩ 重播</button>
+          {isLandscape ? (
+            /* 横屏：一行紧凑布局 */
+            <div className="flex items-center gap-4">
+              <button onClick={() => router.back()} className="text-gray-400 text-sm shrink-0">‹</button>
+              <button onClick={reset} className="text-gray-400 text-xs shrink-0">↩</button>
               <button
                 onClick={handleTap}
-                className={`px-6 py-2 rounded-full font-bold text-sm ${isPlaying ? "bg-red-500 text-white" : "bg-yellow-400 text-black"}`}
+                className={`px-5 py-1.5 rounded-full font-bold text-sm shrink-0 ${isPlaying ? "bg-red-500 text-white" : "bg-yellow-400 text-black"}`}
               >
-                {isPlaying ? "⏸ 暂停" : "▶ 开始"}
+                {isPlaying ? "⏸" : "▶"}
               </button>
+              <div className="flex items-center gap-1 flex-1">
+                <span className="text-gray-500 text-xs w-6">速</span>
+                <input type="range" min="0.3" max="5" step="0.1" value={speed}
+                  onChange={(e) => setSpeed(Number(e.target.value))} className="flex-1 accent-yellow-400 h-1" />
+                <span className="text-yellow-400 text-xs w-6">{speed.toFixed(1)}</span>
+              </div>
+              <div className="flex items-center gap-1 flex-1">
+                <span className="text-gray-500 text-xs w-6">字</span>
+                <input type="range" min="20" max="72" step="2" value={fontSize}
+                  onChange={(e) => setFontSize(Number(e.target.value))} className="flex-1 accent-yellow-400 h-1" />
+                <span className="text-yellow-400 text-xs w-6">{fontSize}</span>
+              </div>
+              <button onClick={() => setMirror((m) => !m)} className={`text-xs shrink-0 ${mirror ? "text-yellow-400" : "text-gray-500"}`}>镜像</button>
+              {pipSupported && (
+                <button onClick={togglePiP} className={`text-xs shrink-0 ${isPiP ? "text-yellow-400" : "text-gray-500"}`}>
+                  {isPiP ? "⊡关" : "⊡悬浮"}
+                </button>
+              )}
             </div>
-            <button onClick={() => setMirror((m) => !m)} className={`text-sm p-2 ${mirror ? "text-yellow-400" : "text-gray-400"}`}>
-              镜像
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="text-gray-400 text-xs w-12">速度</span>
-            <input type="range" min="0.3" max="5" step="0.1" value={speed}
-              onChange={(e) => setSpeed(Number(e.target.value))} className="flex-1 accent-yellow-400" />
-            <span className="text-yellow-400 text-xs w-6">{speed.toFixed(1)}</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="text-gray-400 text-xs w-12">字号</span>
-            <input type="range" min="20" max="72" step="2" value={fontSize}
-              onChange={(e) => setFontSize(Number(e.target.value))} className="flex-1 accent-yellow-400" />
-            <span className="text-yellow-400 text-xs w-6">{fontSize}</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="text-gray-400 text-xs w-12">透明度</span>
-            <input type="range" min="0.1" max="1" step="0.05" value={bgOpacity}
-              onChange={(e) => setBgOpacity(Number(e.target.value))} className="flex-1 accent-yellow-400" />
-            <span className="text-yellow-400 text-xs w-6">{Math.round(bgOpacity * 100)}%</span>
-          </div>
-
-          {pipSupported && (
-            <button
-              onClick={togglePiP}
-              className={`w-full py-3 rounded-2xl font-bold text-sm ${
-                isPiP ? "bg-yellow-400/20 text-yellow-400 border border-yellow-400/40" : "bg-white/10 text-white"
-              }`}
-            >
-              {isPiP ? "⊡ 悬浮窗已开启 · 点击关闭" : "⊡ 开启悬浮窗（可切换到抖音等App）"}
-            </button>
+          ) : (
+            /* 竖屏：原有多行布局 */
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <button onClick={() => router.back()} className="text-gray-400 text-sm p-2">‹ 返回</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={reset} className="px-3 py-2 rounded-full text-sm text-gray-400 bg-white/10">↩ 重播</button>
+                  <button
+                    onClick={handleTap}
+                    className={`px-6 py-2 rounded-full font-bold text-sm ${isPlaying ? "bg-red-500 text-white" : "bg-yellow-400 text-black"}`}
+                  >
+                    {isPlaying ? "⏸ 暂停" : "▶ 开始"}
+                  </button>
+                </div>
+                <button onClick={() => setMirror((m) => !m)} className={`text-sm p-2 ${mirror ? "text-yellow-400" : "text-gray-400"}`}>
+                  镜像
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-gray-400 text-xs w-12">速度</span>
+                <input type="range" min="0.3" max="5" step="0.1" value={speed}
+                  onChange={(e) => setSpeed(Number(e.target.value))} className="flex-1 accent-yellow-400" />
+                <span className="text-yellow-400 text-xs w-6">{speed.toFixed(1)}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-gray-400 text-xs w-12">字号</span>
+                <input type="range" min="20" max="72" step="2" value={fontSize}
+                  onChange={(e) => setFontSize(Number(e.target.value))} className="flex-1 accent-yellow-400" />
+                <span className="text-yellow-400 text-xs w-6">{fontSize}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-gray-400 text-xs w-12">透明度</span>
+                <input type="range" min="0.1" max="1" step="0.05" value={bgOpacity}
+                  onChange={(e) => setBgOpacity(Number(e.target.value))} className="flex-1 accent-yellow-400" />
+                <span className="text-yellow-400 text-xs w-6">{Math.round(bgOpacity * 100)}%</span>
+              </div>
+              {pipSupported && (
+                <button
+                  onClick={togglePiP}
+                  className={`w-full py-3 rounded-2xl font-bold text-sm ${
+                    isPiP ? "bg-yellow-400/20 text-yellow-400 border border-yellow-400/40" : "bg-white/10 text-white"
+                  }`}
+                >
+                  {isPiP ? "⊡ 悬浮窗已开启 · 点击关闭" : "⊡ 开启悬浮窗（可切换到抖音等App）"}
+                </button>
+              )}
+              <div className="text-center text-gray-700 text-xs">空格键 播放/暂停 · ↑↓ 调速度 · ←→ 调字号</div>
+            </div>
           )}
-
-          <div className="text-center text-gray-700 text-xs">空格键 播放/暂停 · ↑↓ 调速度 · ←→ 调字号</div>
         </div>
       )}
     </div>
