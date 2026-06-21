@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useScriptStore } from "@/lib/store";
 
@@ -24,6 +24,7 @@ function EditorContent() {
   const [saved, setSaved] = useState(false);
   const [originalContent, setOriginalContent] = useState<string | null>(null);
   const [mode, setMode] = useState<"edit" | "ai-optimize" | "ai-generate">("edit");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // AI生成表单
   const [product, setProduct] = useState("");
@@ -110,6 +111,25 @@ function EditorContent() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const importTxt = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      if (content.trim() && !window.confirm("是否覆盖当前内容？")) {
+        e.target.value = "";
+        return;
+      }
+      setContent(text);
+      if (title.trim() === "新脚本" || title.trim() === "") {
+        setTitle(file.name.replace(/\.txt$/i, "").slice(0, 20));
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file, "utf-8");
   };
 
   return (
@@ -201,12 +221,27 @@ function EditorContent() {
       {/* 内容区 */}
       <div className="flex-1 px-4 pb-4">
         {mode === "edit" && (
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder={"在这里输入你的脚本内容...\n\n小技巧：用【动作】标注动作提示，例如：\n【动作】拿起产品展示正面"}
-            className="w-full h-full min-h-[300px] bg-[#1a1a1a] rounded-2xl p-4 text-sm leading-7 outline-none resize-none border border-white/5 text-gray-100 placeholder-gray-600"
-          />
+          <div className="flex flex-col gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt"
+              className="hidden"
+              onChange={importTxt}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 text-gray-400 text-sm bg-[#1a1a1a] border border-white/5 rounded-xl px-4 py-2.5 self-start"
+            >
+              <span>📄</span> 导入 .txt 文件
+            </button>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder={"在这里输入你的脚本内容...\n\n小技巧：用【动作】标注动作提示，例如：\n【动作】拿起产品展示正面"}
+              className="w-full min-h-[300px] bg-[#1a1a1a] rounded-2xl p-4 text-sm leading-7 outline-none resize-none border border-white/5 text-gray-100 placeholder-gray-600"
+            />
+          </div>
         )}
 
         {mode === "ai-optimize" && (
