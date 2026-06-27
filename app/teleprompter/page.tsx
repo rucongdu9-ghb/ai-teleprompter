@@ -227,11 +227,19 @@ function TeleprompterContent() {
     voiceSearchFromRef.current = 0;
   }, [lines]);
 
-  const startVoiceMode = useCallback(() => {
+  const startVoiceMode = useCallback(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
-      alert("您的浏览器不支持语音识别，请使用 Safari 或 Chrome");
+      alert("您的浏览器不支持语音识别，请使用 Chrome 浏览器");
+      return;
+    }
+    // 明确申请麦克风权限（解决 Android/MIUI 静默拒绝问题）
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      alert("麦克风权限被拒绝。\n\n请点击浏览器地址栏的🔒图标 → 麦克风 → 允许，然后刷新页面重试。");
       return;
     }
     const recognition = new SR();
@@ -426,6 +434,22 @@ function TeleprompterContent() {
     revealControls();
   };
 
+  const handleProgressTap = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const container = containerRef.current;
+    if (!container) return;
+    const max = container.scrollHeight - container.clientHeight;
+    posRef.current = pct * max;
+    container.scrollTop = posRef.current;
+    if (progressBarRef.current) progressBarRef.current.style.width = `${pct * 100}%`;
+    drawCanvas();
+    revealControls();
+  };
+
   // 背景色根据透明度和主题混合
   const bgColor = themeId === "white"
     ? `rgba(255,255,255,${bgOpacity})`
@@ -451,9 +475,16 @@ function TeleprompterContent() {
       />
       <video ref={videoRef} playsInline muted style={{ position: "fixed", left: "-9999px", top: 0, width: 1, height: 1 }} />
 
-      {/* 进度条 */}
-      <div className="absolute top-0 left-0 right-0 h-1 bg-white/10 z-20">
-        <div ref={progressBarRef} className="h-full bg-yellow-400 transition-none" style={{ width: "0%" }} />
+      {/* 进度条（可点击跳转） */}
+      <div
+        className="absolute top-0 left-0 right-0 z-20 cursor-pointer"
+        style={{ paddingBottom: 12 }}
+        onClick={handleProgressTap}
+        onTouchStart={handleProgressTap}
+      >
+        <div className="h-1 bg-white/10">
+          <div ref={progressBarRef} className="h-full bg-yellow-400 transition-none" style={{ width: "0%" }} />
+        </div>
       </div>
 
       {/* 脚本内容区 */}
@@ -576,29 +607,43 @@ function TeleprompterContent() {
               </div>
 
               {/* 声音跟读 */}
-              <button
-                onClick={() => isVoiceMode ? stopVoiceMode() : startVoiceMode()}
-                className={`w-full py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 ${
-                  isVoiceMode
-                    ? "bg-red-500/20 text-red-400 border border-red-500/40"
-                    : "bg-white/10 text-white"
-                }`}
-              >
-                <span className={isVoiceMode ? "animate-pulse" : ""}>🎤</span>
-                {isVoiceMode ? "声音跟读开启中 · 点击关闭" : "开启声音跟读（自动跟随朗读）"}
-              </button>
-
-              {pipSupported && (
+              <div className="flex flex-col gap-1">
                 <button
-                  onClick={togglePiP}
-                  className={`w-full py-3 rounded-2xl font-bold text-sm ${
-                    isPiP ? "bg-yellow-400/20 text-yellow-400 border border-yellow-400/40" : "bg-white/10 text-white"
+                  onClick={() => isVoiceMode ? stopVoiceMode() : startVoiceMode()}
+                  className={`w-full py-3 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 ${
+                    isVoiceMode
+                      ? "bg-red-500/20 text-red-400 border border-red-500/40"
+                      : "bg-white/10 text-white"
                   }`}
                 >
-                  {isPiP ? "⊡ 悬浮窗已开启 · 点击关闭" : "⊡ 开启悬浮窗（可切换到抖音等App）"}
+                  <span className={isVoiceMode ? "animate-pulse" : ""}>🎤</span>
+                  {isVoiceMode ? "声音跟读开启中 · 点击关闭" : "开启声音跟读"}
                 </button>
+                {!isVoiceMode && (
+                  <p className="text-gray-600 text-xs text-center px-2">
+                    你说话 → 提词器自动跟到你说的位置（需麦克风权限）
+                  </p>
+                )}
+              </div>
+
+              {pipSupported && (
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={togglePiP}
+                    className={`w-full py-3 rounded-2xl font-bold text-sm ${
+                      isPiP ? "bg-yellow-400/20 text-yellow-400 border border-yellow-400/40" : "bg-white/10 text-white"
+                    }`}
+                  >
+                    {isPiP ? "⊡ 悬浮窗已开启 · 点击关闭" : "⊡ 开启悬浮窗"}
+                  </button>
+                  {!isPiP && (
+                    <p className="text-gray-600 text-xs text-center px-2">
+                      开启后切换到抖音/直播 App，提词器悬浮在上方
+                    </p>
+                  )}
+                </div>
               )}
-              <div className="text-center text-gray-700 text-xs">空格键 播放/暂停 · ↑↓ 调速度 · ←→ 调字号</div>
+              <div className="text-center text-gray-700 text-xs">点击进度条可跳转 · 空格 播放/暂停 · ↑↓ 调速</div>
             </div>
           )}
         </div>

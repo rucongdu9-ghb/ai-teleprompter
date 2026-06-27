@@ -4,12 +4,32 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useScriptStore } from "@/lib/store";
 
 type Lang = "zh" | "en" | "ar";
+type Duration = "short" | "medium" | "long";
 
 const LANG_LABELS: Record<Lang, string> = {
   zh: "中文",
   en: "English",
   ar: "العربية",
 };
+
+const DURATION_OPTIONS: { value: Duration; label: string; sub: string }[] = [
+  { value: "short",  label: "短视频",  sub: "3-5分钟" },
+  { value: "medium", label: "中等直播", sub: "10-15分钟" },
+  { value: "long",   label: "长直播",  sub: "20-30分钟" },
+];
+
+const CATEGORIES: { label: string; emoji: string; audience: string; pointHints: string[] }[] = [
+  { label: "女装",   emoji: "👗", audience: "18-45岁女性，注重穿搭时尚", pointHints: ["显瘦版型", "舒适面料", "多场景穿搭", "性价比高", "气质优雅"] },
+  { label: "男装",   emoji: "👔", audience: "20-45岁男性，追求品质生活", pointHints: ["剪裁合身", "面料品质", "商务休闲两用", "耐穿耐洗", "百搭"] },
+  { label: "美妆",   emoji: "💄", audience: "18-40岁女性，注重肌肤护理", pointHints: ["美白提亮", "抗老抗皱", "补水保湿", "温和无刺激", "见效快"] },
+  { label: "护肤",   emoji: "🧴", audience: "20-45岁注重护肤人群",       pointHints: ["成分安全", "深层修护", "敏感肌可用", "早晚可用", "持久锁水"] },
+  { label: "食品",   emoji: "🍜", audience: "18-50岁家庭消费者",         pointHints: ["口感好", "健康低脂", "方便快手", "全家适合", "性价比"] },
+  { label: "保健品", emoji: "💊", audience: "30-60岁健康关注人群",       pointHints: ["成分天然", "效果显著", "安全无副作用", "持续服用", "口碑好"] },
+  { label: "家居",   emoji: "🏠", audience: "25-45岁有房一族",           pointHints: ["颜值高", "实用耐用", "收纳便利", "品质保障", "价格实惠"] },
+  { label: "数码",   emoji: "📱", audience: "18-40岁科技爱好者",         pointHints: ["性能强劲", "续航持久", "颜值好看", "性价比高", "兼容性强"] },
+  { label: "母婴",   emoji: "👶", audience: "25-40岁新手父母",           pointHints: ["安全材质", "宝宝喜欢", "易清洁", "多功能", "促进发育"] },
+  { label: "运动",   emoji: "🏃", audience: "18-45岁运动健身人群",       pointHints: ["专业级别", "舒适透气", "防滑耐用", "时尚设计", "多场景适用"] },
+];
 
 function EditorContent() {
   const router = useRouter();
@@ -32,6 +52,9 @@ function EditorContent() {
   const [audience, setAudience] = useState("");
   const [lang, setLang] = useState<Lang>("zh");
   const [phonetics, setPhonetics] = useState(false);
+  const [duration, setDuration] = useState<Duration>("medium");
+  const [category, setCategory] = useState("");
+  const [selectedHints, setSelectedHints] = useState<string[]>([]);
 
   useEffect(() => {
     if (id) {
@@ -89,6 +112,28 @@ function EditorContent() {
     }
   };
 
+  const selectCategory = (cat: typeof CATEGORIES[0]) => {
+    if (category === cat.label) {
+      setCategory("");
+      setSelectedHints([]);
+      return;
+    }
+    setCategory(cat.label);
+    setSelectedHints([]);
+    if (!audience.trim()) setAudience(cat.audience);
+  };
+
+  const toggleHint = (hint: string) => {
+    setSelectedHints((prev) => {
+      const next = prev.includes(hint) ? prev.filter((h) => h !== hint) : [...prev, hint];
+      const base = points.trim().replace(/[，,]\s*([一-龥])/g, '、$1');
+      const existing = base ? base.split(/[、，,]/).map(s => s.trim()).filter(Boolean) : [];
+      const merged = [...new Set([...existing, ...next])].join("、");
+      setPoints(merged);
+      return next;
+    });
+  };
+
   const aiGenerate = async () => {
     if (!product.trim()) return;
     setLoading(true);
@@ -97,7 +142,7 @@ function EditorContent() {
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate", product, points, audience, lang, phonetics }),
+        body: JSON.stringify({ action: "generate", product, points, audience, lang, phonetics, duration, category }),
       });
       const data = await res.json();
       if (data.error) { setError(data.error); return; }
@@ -263,7 +308,7 @@ function EditorContent() {
         )}
 
         {mode === "ai-generate" && (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {/* 语言选择 */}
             <div className="bg-[#1a1a1a] rounded-xl border border-white/5 p-1 flex gap-1">
               {(["zh", "en", "ar"] as Lang[]).map((l) => (
@@ -299,6 +344,72 @@ function EditorContent() {
               </button>
             )}
 
+            {/* 脚本时长 */}
+            <div>
+              <p className="text-gray-500 text-xs mb-2">脚本时长</p>
+              <div className="flex gap-2">
+                {DURATION_OPTIONS.map((d) => (
+                  <button
+                    key={d.value}
+                    onClick={() => setDuration(d.value)}
+                    className={`flex-1 py-2.5 rounded-xl border text-xs font-medium flex flex-col items-center gap-0.5 transition-colors ${
+                      duration === d.value
+                        ? "bg-yellow-400/10 border-yellow-400/40 text-yellow-400"
+                        : "bg-[#1a1a1a] border-white/5 text-gray-400"
+                    }`}
+                  >
+                    <span className="font-semibold">{d.label}</span>
+                    <span className="opacity-60">{d.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 商品类目 */}
+            <div>
+              <p className="text-gray-500 text-xs mb-2">商品类目（选填，帮 AI 更精准生成）</p>
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.label}
+                    onClick={() => selectCategory(cat)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                      category === cat.label
+                        ? "bg-yellow-400/10 border-yellow-400/40 text-yellow-400"
+                        : "bg-[#1a1a1a] border-white/5 text-gray-400"
+                    }`}
+                  >
+                    {cat.emoji} {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 常见卖点快速选（选了类目才显示） */}
+            {category && (() => {
+              const cat = CATEGORIES.find(c => c.label === category);
+              return cat ? (
+                <div>
+                  <p className="text-gray-500 text-xs mb-2">常见卖点（点击添加）</p>
+                  <div className="flex flex-wrap gap-2">
+                    {cat.pointHints.map((hint) => (
+                      <button
+                        key={hint}
+                        onClick={() => toggleHint(hint)}
+                        className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                          selectedHints.includes(hint)
+                            ? "bg-yellow-400/10 border-yellow-400/50 text-yellow-400"
+                            : "bg-[#1a1a1a] border-white/10 text-gray-500"
+                        }`}
+                      >
+                        {selectedHints.includes(hint) ? "✓ " : "+ "}{hint}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
             <input
               value={product}
               onChange={(e) => setProduct(e.target.value)}
@@ -308,8 +419,8 @@ function EditorContent() {
             <textarea
               value={points}
               onChange={(e) => setPoints(e.target.value)}
-              placeholder="核心卖点（选填）例：美白、抗老、30天见效"
-              className="w-full bg-[#1a1a1a] rounded-xl px-4 py-3 text-sm outline-none border border-white/5 placeholder-gray-600 min-h-[80px] resize-none"
+              placeholder="核心卖点（可点上方标签添加，或自己输入）"
+              className="w-full bg-[#1a1a1a] rounded-xl px-4 py-3 text-sm outline-none border border-white/5 placeholder-gray-600 min-h-[70px] resize-none"
             />
             <input
               value={audience}
@@ -320,7 +431,7 @@ function EditorContent() {
             <button
               onClick={aiGenerate}
               disabled={loading || !product.trim()}
-              className="w-full bg-yellow-400 text-black font-bold py-4 rounded-2xl disabled:opacity-50 mt-2"
+              className="w-full bg-yellow-400 text-black font-bold py-4 rounded-2xl disabled:opacity-50"
             >
               {loading ? "AI 生成中..." : "🚀 一键生成完整脚本"}
             </button>

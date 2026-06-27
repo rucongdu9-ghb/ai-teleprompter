@@ -5,9 +5,10 @@ export const runtime = "edge";
 
 export async function GET(req: NextRequest) {
   const s = parseInt(req.nextUrl.searchParams.get("s") ?? "192");
+  const maskable = req.nextUrl.searchParams.get("m") === "1";
   const size = [192, 512].includes(s) ? s : 192;
-  const play = Math.round(size * 0.5);
-  const radius = Math.round(size * 0.2);
+  const play = Math.round(size * (maskable ? 0.38 : 0.5));
+  const radius = maskable ? 0 : Math.round(size * 0.2);
 
   return new ImageResponse(
     <div
